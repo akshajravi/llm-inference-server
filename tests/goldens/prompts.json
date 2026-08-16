@@ -1,0 +1,48 @@
+{
+  "_comment": "The M1 fixed prompt set. Each case targets a distinct failure mode; do not prune this list to make a phase pass.",
+  "model_id": "gpt2",
+  "cases": [
+    {
+      "id": "short_prompt",
+      "prompt": "The capital of France is",
+      "max_tokens": 16,
+      "why": "baseline sanity"
+    },
+    {
+      "id": "long_prompt",
+      "prompt": "Operating systems solved the equivalent problem decades ago. Physical memory is cut into fixed-size pages, each process holds a page table mapping its virtual addresses onto whichever physical pages happen to be free, and fragmentation collapses from an external problem to an internal one bounded by the size of a single page. The same construction applies directly to the key-value cache of a transformer, and the reason it applies is that",
+      "max_tokens": 32,
+      "why": "long prefill; catches position-id bugs that short prompts hide"
+    },
+    {
+      "id": "stops_at_eos",
+      "prompt": "Q: What is 2+2?\nA: 4<|endoftext|>Q: What is 3+3?\nA:",
+      "max_tokens": 64,
+      "why": "must terminate on EOS, not run to max_tokens"
+    },
+    {
+      "id": "stops_at_max_tokens",
+      "prompt": "Once upon a time, in a distant kingdom,",
+      "max_tokens": 24,
+      "why": "must stop exactly at the limit; off-by-one on the final token shows up here"
+    },
+    {
+      "id": "single_token",
+      "prompt": "The quick brown fox jumps over the lazy",
+      "max_tokens": 1,
+      "why": "degenerate case; the decode loop must handle zero iterations after prefill"
+    },
+    {
+      "id": "repeated_structure",
+      "prompt": "You are a helpful assistant.\nUser: hello\nAssistant: Hi!\nUser: hello\nAssistant: Hi!\nUser: hello\nAssistant:",
+      "max_tokens": 24,
+      "why": "shared-prefix shape; will matter if prefix caching (S1) is picked up on Day 14"
+    },
+    {
+      "id": "whitespace_edges",
+      "prompt": "   leading and trailing whitespace   ",
+      "max_tokens": 16,
+      "why": "tokenizer edge case; catches text-vs-token-id comparison mistakes"
+    }
+  ]
+}

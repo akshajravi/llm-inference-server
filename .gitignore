@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+*.egg-info/
+
+# Model weights and HF cache — never committed
+models/
+*.safetensors
+*.bin
+
+# results/ IS committed (M5 needs the published numbers in the repo);
+# scratch runs are not.
+results/scratch/
+
+# Planning docs kept local — private project rationale, not part of the deliverable.
+inference-server-prd.md

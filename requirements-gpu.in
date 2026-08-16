@@ -1,0 +1,6 @@
+# Benchmark box (NVIDIA). One pinned file cannot span Apple Silicon and CUDA, so the
+# published numbers are produced from this one and it names the torch build exactly.
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+-r requirements.in
+triton          # S3 (stretch, Day 14) — pinned here so the GPU env is reproducible either way

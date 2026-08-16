@@ -1,0 +1,10 @@
+# Direct dependencies. Pinned transitively into requirements.txt via `make lock`.
+# Dev target: Apple Silicon (CPU/MPS). See requirements-gpu.in for the benchmark box.
+torch
+transformers
+fastapi
+uvicorn[standard]
+httpx
+numpy
+pydantic
+pytest

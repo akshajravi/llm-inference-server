@@ -1,0 +1,56 @@
+Modern GPUs are extraordinarily wide machines. A single forward pass through a small
+language model to produce one token touches every parameter in the model, streams
+hundreds of megabytes of weights out of high-bandwidth memory, and then performs a
+comparatively trivial amount of arithmetic on them. The result is a machine that spends
+almost all of its time waiting on memory and almost none of it computing. Batching is
+the standard answer: if the weights must be read anyway, read them once and apply them
+to many sequences at the same time. The arithmetic intensity of the decode step rises
+roughly in proportion to the batch size, and the model size cancels out of that ratio
+entirely, which is a surprising and useful fact.
+
+The trouble is that batching in the naive form couples the fate of every request in the
+batch to the slowest one among them. A batch of thirty-two sequences in which thirty-one
+finish after twenty tokens and one continues for five hundred will occupy thirty-one
+slots doing nothing useful for the remaining four hundred and eighty steps. The fix is
+to make the batch mutable: evict a sequence the moment it emits an end-of-sequence
+token, admit a waiting request into the freed slot, and repeat between every single
+decoding step rather than between every batch.
+
+Memory is the second constraint, and in practice it binds sooner. Each sequence carries
+a cache of keys and values for every token it has seen, across every layer and every
+attention head. That cache grows by one entry per token generated, and its total size
+frequently exceeds the size of the model weights by a wide margin. If a server allocates
+that cache contiguously and sizes it for the maximum output length a request might
+reach, it reserves an enormous amount of memory that most requests will never touch.
+Measurements on real traffic put the waste between sixty and eighty percent.
+
+Operating systems solved the equivalent problem decades ago. Physical memory is cut into
+fixed-size pages, each process holds a page table mapping its virtual addresses onto
+whichever physical pages happen to be free, and fragmentation collapses from an external
+problem to an internal one bounded by the size of a single page. The same construction
+applies directly: cut the cache into blocks of sixteen tokens, give each sequence a
+block table, and allocate a new block only when the previous one fills. Worst-case waste
+per sequence falls from the entire unused reservation to fifteen tokens.
+
+Sharing follows naturally from the same structure. Two requests that begin with the same
+system prompt produce identical keys and values for that prefix, so they can point at the
+same physical blocks and pay for the memory once. A reference count on each block records
+how many sequences depend on it, the block is returned to the free list only when that
+count reaches zero, and a sequence that diverges from the shared prefix copies the block
+it is about to modify. This is copy-on-write, and it behaves exactly as it does in a
+kernel, including the failure modes.
+
+Eventually the free list empties. A sequence that needs a block and cannot get one must
+either wait or take one from someone else, and taking it means selecting a victim and
+deciding what to do with its cache. One option is to throw the cache away and recompute
+it later from the token identifiers, which are small and cheap to keep. Another is to
+copy the blocks out to pinned host memory and copy them back on readmission. Which one
+wins depends on how much the victim has already generated and on the bandwidth of the
+link between host and device, and the crossover point is worth measuring rather than
+guessing.
+
+None of this matters if the output changes. An optimization that alters the tokens a
+model produces is not an optimization; it is a bug that happens to run faster. The only
+defensible way to build any of it is to fix a set of prompts, record the exact token
+identifiers that a reference implementation produces under greedy decoding, and assert
+equality after every change, on every commit, before any performance number is believed.
