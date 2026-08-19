@@ -1,5 +1,10 @@
 # Benchmark box (NVIDIA). One pinned file cannot span Apple Silicon and CUDA, so the
 # published numbers are produced from this one and it names the torch build exactly.
+#
+# NOTE: `make lock-gpu` only runs on Linux — triton publishes no macOS wheels, so this
+# file cannot be compiled on the dev Mac. Generate requirements-gpu.txt on the rented
+# box (Day 12) and commit it from there; that is also the machine whose numbers get
+# published, so the lockfile and the results come from the same environment.
 --extra-index-url https://download.pytorch.org/whl/cu124
 
 -r requirements.in

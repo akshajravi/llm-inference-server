@@ -20,6 +20,8 @@ decisions fixed during planning; each row expands as its phase produces a number
 | Preemption | Recompute | CPU swap | Simpler; swap scoped out (see below) | Day 10 |
 | Overload behavior | Bounded queue + 503 | Unbounded queue | Unbounded queues turn overload into unbounded latency | Day 11 |
 | Engine interface | Token IDs + TTFT in `Result` | `generate(prompt) -> str` | Text comparison hides off-by-one; TTFT unmeasurable after the fact | Day 1 |
+| M2 denominator | P1 static batching | Naive P0 | P0 leaves >99% of the GPU idle, so beating it by 3x measures "batching works", not "continuous batching works". Both numbers reported; the static one leads. | Day 1 |
+| Baseline KV reservation | `max_seq_len` per request | `prompt_len + max_tokens` | A contiguous allocator cannot know output length at admission time. Charging only what was asked understates baseline waste to ~0% and erases M3's "before" number. | Day 1 |
 
 ## Scoped out, and why
 

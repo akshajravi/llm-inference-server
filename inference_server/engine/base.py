@@ -21,6 +21,10 @@ class Request:
     request_id: str
     prompt: str
     max_tokens: int
+    #: Override the stop token. Exists because GPT-2 greedy decoding essentially never
+    #: emits <|endoftext|>, so without it nothing would exercise the EOS termination
+    #: path — and every later phase reimplements that path by hand. None = tokenizer default.
+    eos_token_id: int | None = None
 
 
 @dataclass

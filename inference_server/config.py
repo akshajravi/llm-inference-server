@@ -63,6 +63,10 @@ class Config:
 
     # --- generation ---
     default_max_tokens: int = 128
+    #: Worst-case sequence length a contiguous allocator must reserve per request.
+    #: It cannot know the real output length at admission time, so it reserves this
+    #: much every time — which is exactly the waste M3 measures P3 against.
+    max_seq_len: int = 1024
 
     @property
     def torch_dtype(self) -> torch.dtype:

@@ -36,6 +36,7 @@ def main() -> None:
     out = {"model_id": CONFIG.model_id, "cases": {}}
 
     for case in spec["cases"]:
+        eos_id = case.get("eos_token_id", tokenizer.eos_token_id)
         ids = tokenizer(case["prompt"], return_tensors="pt").input_ids.to(CONFIG.device)
         with torch.no_grad():
             generated = model.generate(
@@ -43,16 +44,25 @@ def main() -> None:
                 max_new_tokens=case["max_tokens"],
                 do_sample=False,
                 pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=eos_id,
             )
         new_ids = generated[0, ids.shape[1]:].tolist()
         out["cases"][case["id"]] = {
             "prompt": case["prompt"],
             "max_tokens": case["max_tokens"],
+            "eos_token_id": case.get("eos_token_id"),
             "token_ids": new_ids,
             "text": tokenizer.decode(new_ids, skip_special_tokens=True),
-            "finish_reason": "eos" if new_ids and new_ids[-1] == tokenizer.eos_token_id else "length",
+            "finish_reason": "eos" if new_ids and new_ids[-1] == eos_id else "length",
         }
         print(f"{case['id']:<24} {len(new_ids):>3} tokens  {out['cases'][case['id']]['finish_reason']}")
+
+    reasons = {c["finish_reason"] for c in out["cases"].values()}
+    if "eos" not in reasons:
+        raise SystemExit(
+            "no golden case terminates on EOS — the termination path would go untested. "
+            "Set an eos_token_id override on a case in prompts.json."
+        )
 
     dest = GOLDENS_DIR / f"{CONFIG.model_id.replace('/', '_')}_greedy.json"
     dest.write_text(json.dumps(out, indent=2))

@@ -26,7 +26,7 @@ def load(config: Config | None = None) -> tuple[PreTrainedModel, PreTrainedToken
     # Static batching (P1) left-pads so the newest token is always at index -1.
     tokenizer.padding_side = "left"
 
-    model = AutoModelForCausalLM.from_pretrained(cfg.model_id, torch_dtype=cfg.torch_dtype)
+    model = AutoModelForCausalLM.from_pretrained(cfg.model_id, dtype=cfg.torch_dtype)
     model.to(cfg.device)
     model.eval()
     torch.set_grad_enabled(False)

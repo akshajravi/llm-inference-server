@@ -16,9 +16,10 @@
     },
     {
       "id": "stops_at_eos",
-      "prompt": "Q: What is 2+2?\nA: 4<|endoftext|>Q: What is 3+3?\nA:",
+      "prompt": "Once upon a time, in a distant kingdom,",
       "max_tokens": 64,
-      "why": "must terminate on EOS, not run to max_tokens"
+      "eos_token_id": 11,
+      "why": "must terminate on EOS well before max_tokens. GPT-2 greedy essentially never emits <|endoftext|>, so the stop token is overridden to 11 (a comma), which this prompt reaches at position 6. Without the override nothing tests the termination path that every later phase reimplements by hand."
     },
     {
       "id": "stops_at_max_tokens",

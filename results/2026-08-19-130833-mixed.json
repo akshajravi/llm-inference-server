@@ -1,0 +1,106 @@
+{
+  "hardware": {
+    "device": "mps",
+    "name": "Apple Silicon (MPS)",
+    "model_id": "gpt2",
+    "dtype": "float32",
+    "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+    "python": "3.13.5"
+  },
+  "workload": {
+    "name": "mixed",
+    "num_requests": 200,
+    "prompt_len_range": [
+      16,
+      256
+    ],
+    "out_len_mu": 3.4,
+    "out_len_sigma": 0.9,
+    "out_len_clip": [
+      8,
+      512
+    ],
+    "arrival_rate": 0.0,
+    "seed": 1337
+  },
+  "runs": [
+    {
+      "engine": "naive",
+      "workload": "mixed",
+      "concurrency": 1,
+      "num_requests": 200,
+      "duration_s": 66.85544566693716,
+      "throughput_tok_s": 130.49049203054503,
+      "throughput_req_s": 2.9915289323829675,
+      "ttft_p50": 0.23280304193031043,
+      "ttft_p95": 1.0553561106324185,
+      "ttft_p99": 2.1243025091453434,
+      "latency_p50": 0.23280304193031043,
+      "latency_p95": 1.0553561106324185,
+      "latency_p99": 2.1243025091453434,
+      "kv_waste_pct": 84.4013671875,
+      "num_errors": 0,
+      "num_shed_503": 0,
+      "hardware": {
+        "device": "mps",
+        "name": "Apple Silicon (MPS)",
+        "model_id": "gpt2",
+        "dtype": "float32",
+        "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+        "python": "3.13.5"
+      }
+    },
+    {
+      "engine": "naive",
+      "workload": "mixed",
+      "concurrency": 4,
+      "num_requests": 200,
+      "duration_s": 67.7351403341163,
+      "throughput_tok_s": 128.79577656394056,
+      "throughput_req_s": 2.9526771335153725,
+      "ttft_p50": 0.23219222901389003,
+      "ttft_p95": 1.0907753438688799,
+      "ttft_p99": 1.7410942886630032,
+      "latency_p50": 0.23219222901389003,
+      "latency_p95": 1.0907753438688799,
+      "latency_p99": 1.7410942886630032,
+      "kv_waste_pct": 84.4013671875,
+      "num_errors": 0,
+      "num_shed_503": 0,
+      "hardware": {
+        "device": "mps",
+        "name": "Apple Silicon (MPS)",
+        "model_id": "gpt2",
+        "dtype": "float32",
+        "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+        "python": "3.13.5"
+      }
+    },
+    {
+      "engine": "naive",
+      "workload": "mixed",
+      "concurrency": 16,
+      "num_requests": 200,
+      "duration_s": 63.94791654194705,
+      "throughput_tok_s": 136.4235220122838,
+      "throughput_req_s": 3.127545208901508,
+      "ttft_p50": 0.22504341648891568,
+      "ttft_p95": 1.073918595863506,
+      "ttft_p99": 1.6888285334384965,
+      "latency_p50": 0.22504341648891568,
+      "latency_p95": 1.073918595863506,
+      "latency_p99": 1.6888285334384965,
+      "kv_waste_pct": 84.4013671875,
+      "num_errors": 0,
+      "num_shed_503": 0,
+      "hardware": {
+        "device": "mps",
+        "name": "Apple Silicon (MPS)",
+        "model_id": "gpt2",
+        "dtype": "float32",
+        "platform": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
+        "python": "3.13.5"
+      }
+    }
+  ]
+}

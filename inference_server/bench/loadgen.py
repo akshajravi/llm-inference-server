@@ -14,12 +14,25 @@ from inference_server.bench.workload import WorkItem
 from inference_server.engine.base import Engine, Request, Result
 
 
+def warmup(engine: Engine, rounds: int = 2) -> None:
+    """Burn a few short requests before the clock starts.
+
+    The first forward pass on a device pays one-time costs — kernel autotuning/compilation,
+    allocator initialisation, weights migrating to the device. Timed, those land entirely
+    on the first request and deflate the baseline, which inflates every speedup measured
+    against it. Cheap to avoid, invisible if you don't.
+    """
+    for i in range(rounds):
+        engine.generate(Request(request_id=f"warmup-{i}", prompt="warm up the device", max_tokens=8))
+
+
 async def run_load(
     engine: Engine,
     items: list[WorkItem],
     concurrency: int,
 ) -> tuple[list[Result], list[BaseException], float]:
     """Returns (results, errors, wall_clock_seconds)."""
+    warmup(engine)
     sem = asyncio.Semaphore(concurrency)
     t0 = time.perf_counter()
 

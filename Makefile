@@ -21,6 +21,10 @@ setup: $(VENV)/bin/activate  ## Create venv and install pinned deps
 
 lock: $(VENV)/bin/activate  ## Recompile requirements.txt from requirements.in (NFR3)
 	$(VENV)/bin/pip-compile --strip-extras --output-file=requirements.txt requirements.in
+
+lock-gpu: $(VENV)/bin/activate  ## Recompile requirements-gpu.txt — LINUX/CUDA BOX ONLY
+	@python3 -c "import sys; sys.exit(0 if sys.platform.startswith('linux') else 1)" || \
+		{ echo "requirements-gpu.txt must be generated on the Linux GPU box (triton ships no macOS wheels). Run this on Day 12."; exit 1; }
 	$(VENV)/bin/pip-compile --strip-extras --output-file=requirements-gpu.txt requirements-gpu.in
 
 test:  ## M1 gate — run before every commit

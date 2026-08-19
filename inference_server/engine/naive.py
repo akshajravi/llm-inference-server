@@ -34,17 +34,19 @@ class NaiveEngine(Engine):
         input_ids = self.tokenizer(req.prompt, return_tensors="pt").input_ids.to(CONFIG.device)
         prompt_len = input_ids.shape[1]
 
+        eos_id = req.eos_token_id if req.eos_token_id is not None else self.tokenizer.eos_token_id
         out = self.model.generate(
             input_ids,
             max_new_tokens=req.max_tokens,
             do_sample=False,                      # greedy — M1 compares against exactly this
             pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=eos_id,
         )
         _sync()
         end = time.perf_counter()
 
         generated = out[0, prompt_len:].tolist()
-        finish = "eos" if generated and generated[-1] == self.tokenizer.eos_token_id else "length"
+        finish = "eos" if generated and generated[-1] == eos_id else "length"
         return Result(
             request_id=req.request_id,
             token_ids=generated,
@@ -55,8 +57,12 @@ class NaiveEngine(Engine):
             latency_s=end - start,
             finish_reason=finish,
             prompt_len=prompt_len,
-            # Baseline reserves worst case for every request — the waste number P3 beats (M3).
-            reserved_tokens=prompt_len + req.max_tokens,
+            # M3's "before" number. A contiguous allocator does not know the output
+            # length at admission time, so it reserves max_seq_len for every request
+            # regardless of what the request actually asks for. Charging only
+            # (prompt_len + max_tokens) would understate the baseline to near zero and
+            # quietly delete the number P3 exists to beat.
+            reserved_tokens=CONFIG.max_seq_len,
             used_tokens=prompt_len + len(generated),
         )
 

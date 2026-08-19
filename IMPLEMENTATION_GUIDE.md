@@ -16,7 +16,7 @@ Step-by-step build plan for the inference server. Companion to the project PRD (
 |---|---|---|
 | 1 | P0 — Baseline + harness | Naive server, correctness goldens, load generator, baseline numbers |
 | 2 | P1 — Manual decode + static batching | Own the loop; mixed-length degradation quantified |
-| 3–5 | P2 — Continuous batching | Scheduler / sequence / executor split; M2 (≥3x) |
+| 3–5 | P2 — Continuous batching | Scheduler / sequence / executor split; M2 (≥3x over static) |
 | 6–9 | P3 — Paged KV cache | Block allocator, block tables, PyTorch paged attention; M3 (<10% waste) |
 | 10–11 | P4 — Preemption + admission control | Recompute preemption, bounded queue, overload run; M4 |
 | 12–13 | P5 — Writeup + GPU benchmark day | README, design doc, charts, `make bench`; M5 |
@@ -163,7 +163,9 @@ Write this table into the design doc as-is. "I scoped these out deliberately and
 
 ## Days 3–5 — P2: Continuous batching
 
-**Goal:** ≥3x throughput over the P0 baseline (M2). The batch becomes mutable — evict finished sequences and admit waiting ones *between every step*, so the batch never drains.
+**Goal:** ≥3x throughput over the **P1 static-batching** baseline (M2). The batch becomes mutable — evict finished sequences and admit waiting ones *between every step*, so the batch never drains.
+
+**On the denominator.** Static batching, not naive P0. Against P0 you will clear 3x on Day 3 without trying — batch-1 decode leaves >99% of the GPU idle, so that comparison measures "batching works," not "continuous batching works." Static batching is the honest bar and the one an interviewer assumes you meant. Report both numbers; lead with the static one.
 
 **Day split:** Day 3 = the three components and the step loop, correctness on a single sequence. Day 4 = ragged batching (the hard part) and M1 under mixed batches. Day 5 = server integration and benchmark. If Day 4's ragged masking is still broken at end of day, that's your signal to spend Day 14 here instead of on stretch goals.
 
@@ -194,7 +196,7 @@ Write this table into the design doc as-is. "I scoped these out deliberately and
 
 6. **Benchmark.** Same harness, same workload distribution, against P0. Report throughput **at equal p99 latency** — winning throughput by making everyone wait longer is not a win.
 
-**Minimum shippable by end of Day 5:** a mutable batch that passes M1 and beats P0. If M2's 3x isn't there, report the real number and diagnose it in the writeup — a measured 2.4x with an explanation beats a fabricated 3x. **Cut first:** any prefill/decode scheduling sophistication beyond simple alternation.
+**Minimum shippable by end of Day 5:** a mutable batch that passes M1 and beats static batching. If M2's 3x isn't there, report the real number and diagnose it in the writeup — a measured 2.4x with an explanation beats a fabricated 3x. **Cut first:** any prefill/decode scheduling sophistication beyond simple alternation.
 
 ### Watch out for
 
@@ -205,7 +207,8 @@ Write this table into the design doc as-is. "I scoped these out deliberately and
 ### Exit criteria
 
 - [ ] M1 still holds, including the alone-vs-crowded-batch test
-- [ ] M2 met: ≥3x throughput over P0 baseline on the mixed-length workload (or the real number, recorded with a diagnosis)
+- [ ] M2 met: ≥3x throughput over the P1 static-batching baseline on the mixed-length workload (or the real number, recorded with a diagnosis)
+- [ ] The P0 comparison also recorded, labelled as such — it is a different, much larger number
 - [ ] p99 latency reported alongside throughput, not instead of it
 - [ ] Scheduler, sequence pool, and executor are separately readable
 
