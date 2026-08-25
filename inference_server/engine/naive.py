@@ -11,11 +11,9 @@ import asyncio
 import threading
 import time
 
-import torch
-
 from inference_server.config import CONFIG
 from inference_server.engine.base import Engine, Request, Result
-from inference_server.model import load
+from inference_server.model import load, sync as _sync
 
 
 class NaiveEngine(Engine):
@@ -71,11 +69,3 @@ class NaiveEngine(Engine):
 
     def shutdown(self) -> None:
         pass
-
-
-def _sync() -> None:
-    """CUDA/MPS are async; without this every timing measurement is a lie."""
-    if CONFIG.device == "cuda":
-        torch.cuda.synchronize()
-    elif CONFIG.device == "mps":
-        torch.mps.synchronize()

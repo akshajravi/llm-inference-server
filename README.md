@@ -7,6 +7,9 @@
 A from-scratch inference server implementing continuous batching and a paged KV cache,
 benchmarked against a naive static-batching baseline.
 
+**New here?** [`docs/OVERVIEW.md`](docs/OVERVIEW.md) explains the problem and the current
+state in plain language — no prior knowledge of inference internals assumed.
+
 ## Quickstart
 
 ```bash

@@ -31,3 +31,16 @@ def load(config: Config | None = None) -> tuple[PreTrainedModel, PreTrainedToken
     model.eval()
     torch.set_grad_enabled(False)
     return model, tokenizer
+
+
+def sync() -> None:
+    """Block until the device has actually finished.
+
+    CUDA and MPS queue work asynchronously: the Python call returns long before the GPU
+    is done. Without this, every timing measurement records how fast we submitted work,
+    not how fast it ran. Every engine that reports a duration calls this first.
+    """
+    if CONFIG.device == "cuda":
+        torch.cuda.synchronize()
+    elif CONFIG.device == "mps":
+        torch.mps.synchronize()

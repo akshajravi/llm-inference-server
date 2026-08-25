@@ -69,6 +69,6 @@ ENGINES.update(
 
 #: Engines that are actually implemented today. `make bench` sweeps this; the full
 #: ENGINES dict is what `--engine` accepts. Move a name across as its phase lands.
-IMPLEMENTED = ["naive"]
+IMPLEMENTED = ["naive", "manual"]
 
 __all__ = ["ENGINES", "IMPLEMENTED", "Engine", "NotBuiltYet", "Request", "Result", "build", "register"]
