@@ -35,6 +35,10 @@ class Summary:
 
     #: M3 — waste = 1 - used/reserved. Zero until P3 instruments it.
     kv_waste_pct: float = 0.0
+    #: Share of forward-pass row-steps spent on sequences that had already finished but
+    #: could not give their batch slot back. This is static batching's stall, measured.
+    #: Zero for engines that never batch, and the number P2 has to drive toward zero.
+    stall_pct: float = 0.0
 
     num_errors: int = 0
     num_shed_503: int = 0     # FR7, from P4
@@ -66,6 +70,9 @@ def summarize(
     reserved = sum(r.reserved_tokens for r in results)
     used = sum(r.used_tokens for r in results)
 
+    wasted = sum(r.wasted_steps for r in results)
+    row_steps = total_tokens + wasted   # every row-step either produced a token or did not
+
     return Summary(
         engine=engine,
         workload=workload,
@@ -81,6 +88,7 @@ def summarize(
         latency_p95=_pct(lats, 95),
         latency_p99=_pct(lats, 99),
         kv_waste_pct=100.0 * (1 - used / reserved) if reserved else 0.0,
+        stall_pct=100.0 * wasted / row_steps if row_steps else 0.0,
         num_errors=num_errors,
         num_shed_503=num_shed_503,
         hardware=hardware_info(),
@@ -101,12 +109,12 @@ def hardware_info() -> dict:
 
 def format_table(summaries: list[Summary]) -> str:
     """What `make bench` prints. Kept boring on purpose."""
-    head = f"{'engine':<12}{'workload':<10}{'conc':>5}{'tok/s':>10}{'req/s':>8}{'ttft p50':>10}{'p99':>9}{'lat p50':>9}{'p99':>9}{'waste%':>8}"
+    head = f"{'engine':<12}{'workload':<10}{'conc':>5}{'tok/s':>10}{'req/s':>8}{'ttft p50':>10}{'p99':>9}{'lat p50':>9}{'p99':>9}{'waste%':>8}{'stall%':>8}"
     rows = [head, "-" * len(head)]
     for s in summaries:
         rows.append(
             f"{s.engine:<12}{s.workload:<10}{s.concurrency:>5}{s.throughput_tok_s:>10.1f}"
             f"{s.throughput_req_s:>8.2f}{s.ttft_p50:>10.3f}{s.ttft_p99:>9.3f}"
-            f"{s.latency_p50:>9.3f}{s.latency_p99:>9.3f}{s.kv_waste_pct:>8.1f}"
+            f"{s.latency_p50:>9.3f}{s.latency_p99:>9.3f}{s.kv_waste_pct:>8.1f}{s.stall_pct:>8.1f}"
         )
     return "\n".join(rows)

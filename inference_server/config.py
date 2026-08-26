@@ -53,6 +53,13 @@ class Config:
     device: str = field(default_factory=pick_device)
     dtype: str = os.environ.get("DTYPE", "float32")  # bf16 on the GPU box
 
+    # --- P1 static batching ---
+    #: How long a forming batch waits for more arrivals before launching. Static
+    #: batching cannot admit anyone once the batch is running, so this window is the
+    #: only chance a request has to join — too short and every batch is size 1, too
+    #: long and it shows up directly in TTFT.
+    batch_window_s: float = 0.01
+
     # --- P2 scheduler ---
     max_running: int = 32          # sequences in flight
     max_queue_depth: int = 256     # bound on WAITING; beyond this -> HTTP 503 (FR7)

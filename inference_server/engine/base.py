@@ -39,6 +39,10 @@ class Result:
     # P3 fills these in; P0-P2 leave them at zero. Waste = 1 - used/reserved (M3).
     reserved_tokens: int = 0
     used_tokens: int = 0
+    #: Forward-pass steps this sequence occupied a batch slot *after* it had already
+    #: finished. Static batching cannot release a slot mid-batch, so this is the stall
+    #: the whole project exists to remove — a number, not an assertion. P2 drives it to 0.
+    wasted_steps: int = 0
 
     @property
     def num_generated(self) -> int:
