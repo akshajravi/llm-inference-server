@@ -44,7 +44,7 @@ class StaticBatchEngine(Engine):
         what tests/test_batch_invariance.py exists to catch.
         """
         with self._lock:
-            return self._run_batch([req])[0]
+            return self._run_batch([req], [time.perf_counter()])[0]
 
     # --------------------------------------------------------------- async path
     async def submit(self, req: Request) -> Result:
@@ -52,15 +52,16 @@ class StaticBatchEngine(Engine):
             self._queue = asyncio.Queue()
             self._runner = asyncio.create_task(self._batch_loop())
 
+        # Arrival travels with the request. Under static batching a request may wait out
+        # an entire batch it was too late to join, and BOTH its numbers have to include
+        # that wait: charging only the batch it eventually ran in would hide exactly the
+        # cost this engine exists to measure. TTFT used to start at batch launch, which
+        # quietly flattered the baseline against P2 — the comparison is only honest if
+        # both engines measure from the same event.
         arrived = time.perf_counter()
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
-        await self._queue.put((req, fut))
-        result = await fut
-        # Latency is measured from arrival, not from batch start. Under static batching
-        # a request may wait out a whole batch it was too late to join; charging only
-        # the batch it eventually ran in would hide exactly the cost being measured.
-        result.latency_s = time.perf_counter() - arrived
-        return result
+        await self._queue.put((req, fut, arrived))
+        return await fut
 
     async def _batch_loop(self) -> None:
         """Form a batch, run it to completion, form the next one.
@@ -86,27 +87,27 @@ class StaticBatchEngine(Engine):
                 except (asyncio.TimeoutError, TimeoutError):
                     break
 
-            reqs = [r for r, _ in batch]
+            reqs = [r for r, _, _ in batch]
+            arrivals = [a for _, _, a in batch]
             try:
-                results = await asyncio.to_thread(self._locked_run, reqs)
+                results = await asyncio.to_thread(self._locked_run, reqs, arrivals)
             except Exception as exc:  # noqa: BLE001 — one bad batch must not kill the loop
-                for _, fut in batch:
+                for _, fut, _ in batch:
                     if not fut.done():
                         fut.set_exception(exc)
                 continue
-            for (_, fut), res in zip(batch, results):
+            for (_, fut, _), res in zip(batch, results):
                 if not fut.done():
                     fut.set_result(res)
 
-    def _locked_run(self, reqs: list[Request]) -> list[Result]:
+    def _locked_run(self, reqs: list[Request], arrivals: list[float]) -> list[Result]:
         with self._lock:
-            return self._run_batch(reqs)
+            return self._run_batch(reqs, arrivals)
 
     # ------------------------------------------------------------------ the batch
     @torch.inference_mode()  # thread-local; see the note in manual.py
-    def _run_batch(self, reqs: list[Request]) -> list[Result]:
+    def _run_batch(self, reqs: list[Request], arrivals: list[float]) -> list[Result]:
         device = CONFIG.device
-        start = time.perf_counter()
         n = len(reqs)
 
         # Tokenizer pads LEFT (set in model.py) so every row's newest token sits in the
@@ -133,7 +134,7 @@ class StaticBatchEngine(Engine):
         kv = out.past_key_values
         next_ids = out.logits[:, -1, :].argmax(-1)          # [n]
         sync()
-        ttft = time.perf_counter() - start
+        first_token_at = time.perf_counter()
 
         eos_ids = [
             r.eos_token_id if r.eos_token_id is not None else self.tokenizer.eos_token_id
@@ -186,19 +187,19 @@ class StaticBatchEngine(Engine):
                     record(i, tokens[i])
 
         sync()
-        latency = time.perf_counter() - start
+        done_at = time.perf_counter()
 
         return [
             Result(
                 request_id=reqs[i].request_id,
                 token_ids=generated[i],
                 text=self.tokenizer.decode(generated[i], skip_special_tokens=True),
-                ttft_s=ttft,
+                ttft_s=first_token_at - arrivals[i],
                 # Everyone in the batch shares the batch's wall clock, because nobody is
                 # released until the slowest row finishes. The short requests paying the
                 # long request's latency is not a measurement artifact — it is the
                 # behaviour, and it is what shows up in p99.
-                latency_s=latency,
+                latency_s=done_at - arrivals[i],
                 finish_reason=finish[i],
                 prompt_len=int(prompt_lens[i]),
                 reserved_tokens=CONFIG.max_seq_len,

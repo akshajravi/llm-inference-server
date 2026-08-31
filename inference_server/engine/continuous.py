@@ -9,10 +9,6 @@ the loop turns; whether it shares a forward pass with three others or thirty is 
 fresh every step by the scheduler. P1 had to answer "which batch is this request in?" —
 here the question does not typecheck.
 
-DAY 3 STATE: correct, not yet fast. The executor still runs one sequence per forward
-pass (see its docstring); Day 4 makes the pass genuinely batched. M1 is meaningful now,
-M2 is not measurable until then.
-
 Exit criteria: M2 met; M1 holds including the alone-vs-crowded-batch test;
 p99 reported alongside throughput.
 See IMPLEMENTATION_GUIDE.md "Days 3-5".
@@ -114,7 +110,9 @@ class ContinuousEngine(Engine):
 
             if not finished:
                 if not self.scheduler.has_work:
-                    # Idle. Wait to be woken by an arrival rather than spinning.
+                    # Idle. Release the KV cache before sleeping — a finished burst
+                    # should not hold its memory hostage until the next arrival.
+                    self.executor.reset()
                     self._wake.wait(self.IDLE_POLL_S)
                     self._wake.clear()
                 continue

@@ -24,11 +24,17 @@ class NaiveEngine(Engine):
         self._lock = threading.Lock()
 
     def generate(self, req: Request) -> Result:
-        with self._lock:
-            return self._generate_locked(req)
+        return self._run(req, time.perf_counter())
 
-    def _generate_locked(self, req: Request) -> Result:
-        start = time.perf_counter()
+    def _run(self, req: Request, arrived: float) -> Result:
+        # The clock starts at arrival, OUTSIDE the lock. Starting it after acquisition
+        # would time only the work and discard the queueing — and queueing is the entire
+        # cost of a serialized baseline. At concurrency 32 that made p99 latency read
+        # 1.9s when requests were really waiting for 31 predecessors to finish.
+        with self._lock:
+            return self._generate_locked(req, arrived)
+
+    def _generate_locked(self, req: Request, arrived: float) -> Result:
         input_ids = self.tokenizer(req.prompt, return_tensors="pt").input_ids.to(CONFIG.device)
         prompt_len = input_ids.shape[1]
 
@@ -51,8 +57,11 @@ class NaiveEngine(Engine):
             text=self.tokenizer.decode(generated, skip_special_tokens=True),
             # generate() is a black box: no per-token hook, so TTFT == full latency here.
             # That is honest for a baseline that cannot stream, and it is why P1 exists.
-            ttft_s=end - start,
-            latency_s=end - start,
+            # Both are measured from arrival so they mean the same event they do in every
+            # other engine; a baseline timed differently from its challengers is not a
+            # baseline.
+            ttft_s=end - arrived,
+            latency_s=end - arrived,
             finish_reason=finish,
             prompt_len=prompt_len,
             # M3's "before" number. A contiguous allocator does not know the output
@@ -65,7 +74,10 @@ class NaiveEngine(Engine):
         )
 
     async def submit(self, req: Request) -> Result:
-        return await asyncio.to_thread(self.generate, req)
+        # Arrival is stamped here, before the hop to a worker thread, so the wait for a
+        # free thread counts too.
+        arrived = time.perf_counter()
+        return await asyncio.to_thread(self._run, req, arrived)
 
     def shutdown(self) -> None:
         pass

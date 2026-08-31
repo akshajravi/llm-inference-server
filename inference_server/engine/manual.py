@@ -37,11 +37,17 @@ class ManualEngine(Engine):
         self._lock = threading.Lock()
 
     def generate(self, req: Request) -> Result:
+        return self._run(req, time.perf_counter())
+
+    def _run(self, req: Request, arrived: float) -> Result:
+        # Clock starts at arrival, outside the lock. Timing from acquisition instead
+        # would measure the work and discard the queueing, and on a serialized engine
+        # the queueing is most of what a user experiences.
         with self._lock:
-            return self._generate_locked(req)
+            return self._generate_locked(req, arrived)
 
     @torch.inference_mode()
-    def _generate_locked(self, req: Request) -> Result:
+    def _generate_locked(self, req: Request, arrived: float) -> Result:
         # Not optional, and not merely a micro-optimisation. `torch.set_grad_enabled` in
         # model.py is THREAD-LOCAL, and `submit()` hands work to an asyncio worker
         # thread — so the global switch flipped at load time does not apply here.
@@ -50,7 +56,6 @@ class ManualEngine(Engine):
         # with memory growing linearly in output length. P0 never showed the bug because
         # HuggingFace's generate() carries its own @torch.no_grad() internally.
         # Every engine that owns its own loop must declare this for itself.
-        start = time.perf_counter()
         device = CONFIG.device
         input_ids = self.tokenizer(req.prompt, return_tensors="pt").input_ids.to(device)
         prompt_len = input_ids.shape[1]
@@ -76,7 +81,7 @@ class ManualEngine(Engine):
         # TTFT is a real measurement now. P0 reported it as full latency because
         # generate() offered no per-token hook — this is the first phase where the
         # number means what its name says.
-        ttft = time.perf_counter() - start
+        ttft = time.perf_counter() - arrived
 
         generated: list[int] = [int(next_id.item())]
         finish = "eos" if generated[0] == eos_id else ""
@@ -102,7 +107,7 @@ class ManualEngine(Engine):
             finish = "length"
 
         sync()
-        latency = time.perf_counter() - start
+        latency = time.perf_counter() - arrived
 
         return Result(
             request_id=req.request_id,
@@ -120,7 +125,8 @@ class ManualEngine(Engine):
         )
 
     async def submit(self, req: Request) -> Result:
-        return await asyncio.to_thread(self.generate, req)
+        arrived = time.perf_counter()
+        return await asyncio.to_thread(self._run, req, arrived)
 
     def shutdown(self) -> None:
         pass
