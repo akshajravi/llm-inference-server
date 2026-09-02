@@ -46,9 +46,14 @@ async def main() -> None:
 
     summaries: list[Summary] = []
     for engine_name in engines:
-        engine = build(engine_name)
-        try:
-            for concurrency in levels:
+        for concurrency in levels:
+            # A fresh engine per measurement. Reusing one across concurrency levels lets
+            # state accumulate — cache, threads, allocator fragmentation — so a later
+            # level is measured on an engine the earlier ones already used. Observed as a
+            # 40% throughput spread on identical work; the model itself is cached by
+            # load(), so rebuilding costs little.
+            engine = build(engine_name)
+            try:
                 print(f"running {engine_name} @ concurrency={concurrency} ...", flush=True)
                 results, errors, duration = await run_load(engine, items, concurrency)
                 summaries.append(
@@ -61,8 +66,8 @@ async def main() -> None:
                         num_errors=len(errors),
                     )
                 )
-        finally:
-            engine.shutdown()
+            finally:
+                engine.shutdown()
 
     print()
     print(format_table(summaries))
