@@ -66,7 +66,12 @@ class Config:
 
     # --- P3 paged KV ---
     block_size: int = 16           # tokens per block
-    num_blocks: int = 2048         # sized to fill GPU memory after weights
+    #: max_running * max_seq_len / block_size = 32 * 1024 / 16. Deliberately the exact
+    #: capacity the contiguous engines reserve, so P3 is measured holding the same worst
+    #: case P2 does — the win has to come from packing, not from a smaller pool. For gpt2
+    #: at fp32 that is 2.4 GiB (72 KiB/token); PagedKVPool.describe() prints the real
+    #: figure, and ModelDims.blocks_for_budget() sizes it from a memory budget instead.
+    num_blocks: int = 2048
 
     # --- generation ---
     default_max_tokens: int = 128
