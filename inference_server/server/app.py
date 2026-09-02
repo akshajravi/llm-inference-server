@@ -36,7 +36,12 @@ app = FastAPI(title="inference-server", lifespan=lifespan)
 @app.post("/generate", response_model=GenerateResponse)
 async def generate(body: GenerateRequest) -> GenerateResponse:
     result = await _engine.submit(
-        Request(request_id=str(uuid.uuid4()), prompt=body.prompt, max_tokens=body.max_tokens)
+        Request(
+            request_id=str(uuid.uuid4()),
+            prompt=body.prompt,
+            max_tokens=body.max_tokens,
+            eos_token_id=body.eos_token_id,
+        )
     )
     return GenerateResponse(
         text=result.text,

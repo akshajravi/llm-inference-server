@@ -34,6 +34,7 @@ class StaticBatchEngine(Engine):
         self._lock = threading.Lock()          # one batch on the device at a time
         self._queue: asyncio.Queue | None = None
         self._runner: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # ---------------------------------------------------------------- sync path
     def generate(self, req: Request) -> Result:
@@ -48,9 +49,19 @@ class StaticBatchEngine(Engine):
 
     # --------------------------------------------------------------- async path
     async def submit(self, req: Request) -> Result:
-        if self._queue is None:
+        # The queue and the batch loop belong to whichever event loop called first, and
+        # a Queue is only usable from that loop. Under uvicorn there is exactly one loop
+        # for the life of the process, so binding once looks fine — until a second loop
+        # appears, at which point `put` lands in a queue whose consumer died with its
+        # loop and the caller awaits a future nobody will ever resolve. Found by driving
+        # the goldens through FastAPI's TestClient, which opens a fresh loop per request:
+        # request one passed, request two hung forever. Rebinding costs one identity
+        # check and turns a deadlock into a new batch loop.
+        loop = asyncio.get_running_loop()
+        if self._queue is None or self._loop is not loop:
             self._queue = asyncio.Queue()
-            self._runner = asyncio.create_task(self._batch_loop())
+            self._loop = loop
+            self._runner = loop.create_task(self._batch_loop())
 
         # Arrival travels with the request. Under static batching a request may wait out
         # an entire batch it was too late to join, and BOTH its numbers have to include
@@ -210,6 +221,10 @@ class StaticBatchEngine(Engine):
         ]
 
     def shutdown(self) -> None:
-        if self._runner is not None:
-            self._runner.cancel()
-            self._runner = None
+        # Only cancellable from its own loop; if that loop is already gone the task went
+        # with it, so dropping the reference is the whole cleanup.
+        if self._runner is not None and self._loop is not None and not self._loop.is_closed():
+            self._loop.call_soon_threadsafe(self._runner.cancel)
+        self._runner = None
+        self._queue = None
+        self._loop = None

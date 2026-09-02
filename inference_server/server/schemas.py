@@ -10,6 +10,10 @@ from inference_server.config import CONFIG
 class GenerateRequest(BaseModel):
     prompt: str
     max_tokens: int = Field(default=CONFIG.default_max_tokens, ge=1, le=4096)
+    #: Override the stop token, mirroring Request.eos_token_id. Without this field the
+    #: HTTP path silently dropped the override and fell back to the tokenizer default,
+    #: so the EOS goldens passed in-process and failed over the wire. None = default.
+    eos_token_id: int | None = Field(default=None, ge=0)
 
 
 class GenerateResponse(BaseModel):
