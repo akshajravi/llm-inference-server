@@ -23,6 +23,12 @@ class GenerateResponse(BaseModel):
     finish_reason: str
     ttft_s: float
     latency_s: float
+    # --- M3, copied from Result so the HTTP benchmark path (bench/loadgen.py) reports
+    # waste% instead of 0.0. reserved is what the engine held for this sequence, used
+    # is prompt + generated; waste = 1 - used/reserved.
+    prompt_len: int = 0
+    reserved_tokens: int = 0
+    used_tokens: int = 0
 
 
 class HealthResponse(BaseModel):
@@ -31,4 +37,16 @@ class HealthResponse(BaseModel):
     model_id: str
     device: str
     hardware: str
-    queue_depth: int = 0      # FR7: observable from Day 1, real from P4
+    # --- P4 (FR7 / M4): what the overload run polls and charts. Zeros on engines that
+    # have no scheduler (naive, manual, static); cumulative counters never reset.
+    queue_depth: int = 0      # FR7: new arrivals waiting; the 503 bound applies to this
+    num_running: int = 0
+    num_waiting: int = 0      # queue_depth + recompute-preempted sequences awaiting re-admission
+    num_swapped: int = 0      # swap-preempted sequences whose KV is on the host
+    free_blocks: int = 0
+    num_blocks: int = 0
+    preemptions: int = 0      # cumulative
+    swaps: int = 0            # cumulative
+    completed: int = 0        # cumulative
+    rss_bytes: int = 0        # process resident set size (peak, from getrusage)
+    device_mem_bytes: int = 0 # torch allocator bytes on cuda/mps; 0 on cpu

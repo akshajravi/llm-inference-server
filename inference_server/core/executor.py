@@ -87,7 +87,10 @@ class Executor:
         static batching had — but it is paid once per sequence rather than on every step,
         which is why it is tolerable and the decode-side version was not.
         """
-        input_ids, attn = self._pad_left([s.prompt_token_ids for s in seqs])
+        # next_input_ids, not prompt_token_ids: after a recompute preemption the prefill
+        # covers prompt + everything generated so far (see Sequence.next_input_ids).
+        rows = [s.next_input_ids for s in seqs]
+        input_ids, attn = self._pad_left(rows)
 
         # Positions count real tokens, not columns. cumsum over the mask gives each real
         # token its rank among real tokens; pad slots clamp to 0 and are masked anyway.
@@ -100,10 +103,10 @@ class Executor:
             position_ids=position_ids,
             use_cache=True,
         )
-        for s in seqs:
-            # Its own prompt length, never the padded width — the pad columns exist in
+        for s, row in zip(seqs, rows):
+            # Its own token count, never the padded width — the pad columns exist in
             # the tensor but are not this sequence's tokens.
-            s.num_cached = s.prompt_len
+            s.num_cached = len(row)
 
         self._absorb(seqs, out.past_key_values)
         return out.logits[:, -1, :].argmax(-1).tolist()

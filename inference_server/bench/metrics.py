@@ -42,6 +42,10 @@ class Summary:
 
     num_errors: int = 0
     num_shed_503: int = 0     # FR7, from P4
+    #: Requests offered to the engine. In a closed loop this equals num_requests +
+    #: errors; in the open-loop overload run it is the independent variable and
+    #: submitted == completed + shed + errors is the M4 accounting run.py asserts.
+    num_submitted: int = 0
 
     hardware: dict = field(default_factory=dict)
 
@@ -62,6 +66,7 @@ def summarize(
     duration_s: float,
     num_errors: int = 0,
     num_shed_503: int = 0,
+    num_submitted: int | None = None,
 ) -> Summary:
     ttfts = [r.ttft_s for r in results]
     lats = [r.latency_s for r in results]
@@ -91,6 +96,7 @@ def summarize(
         stall_pct=100.0 * wasted / row_steps if row_steps else 0.0,
         num_errors=num_errors,
         num_shed_503=num_shed_503,
+        num_submitted=(len(results) + num_errors + num_shed_503) if num_submitted is None else num_submitted,
         hardware=hardware_info(),
     )
 
@@ -109,12 +115,16 @@ def hardware_info() -> dict:
 
 def format_table(summaries: list[Summary]) -> str:
     """What `make bench` prints. Kept boring on purpose."""
-    head = f"{'engine':<12}{'workload':<10}{'conc':>5}{'tok/s':>10}{'req/s':>8}{'ttft p50':>10}{'p99':>9}{'lat p50':>9}{'p99':>9}{'waste%':>8}{'stall%':>8}"
+    head = (
+        f"{'engine':<12}{'workload':<10}{'conc':>5}{'tok/s':>10}{'req/s':>8}{'ttft p50':>10}{'p99':>9}"
+        f"{'lat p50':>9}{'p99':>9}{'waste%':>8}{'stall%':>8}{'shed':>7}{'err':>5}"
+    )
     rows = [head, "-" * len(head)]
     for s in summaries:
         rows.append(
             f"{s.engine:<12}{s.workload:<10}{s.concurrency:>5}{s.throughput_tok_s:>10.1f}"
             f"{s.throughput_req_s:>8.2f}{s.ttft_p50:>10.3f}{s.ttft_p99:>9.3f}"
             f"{s.latency_p50:>9.3f}{s.latency_p99:>9.3f}{s.kv_waste_pct:>8.1f}{s.stall_pct:>8.1f}"
+            f"{s.num_shed_503:>7}{s.num_errors:>5}"
         )
     return "\n".join(rows)

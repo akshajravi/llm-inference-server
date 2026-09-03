@@ -72,6 +72,22 @@ class Config:
     #: at fp32 that is 2.4 GiB (72 KiB/token); PagedKVPool.describe() prints the real
     #: figure, and ModelDims.blocks_for_budget() sizes it from a memory budget instead.
     num_blocks: int = 2048
+    #: Which paged attention kernel core/attention.py dispatches to. "gather" is the
+    #: PyTorch path that ships; "triton" is S3 stretch and raises until Day 14.
+    attention: str = os.environ.get("ATTENTION", "gather")
+    #: S1. Share full KV blocks between sequences whose token histories start the same
+    #: way (core/prefix_cache.py). On by default because it is free when nothing
+    #: matches; PREFIX_CACHING=0 is the A/B control for the shared-prefix workload.
+    prefix_caching: bool = os.environ.get("PREFIX_CACHING", "1") == "1"
+
+    # --- P4 preemption + admission ---
+    #: What happens to a victim's KV when the pool runs dry (FR6, S2). "recompute" frees
+    #: it and re-prefills prompt + generated tokens on re-admission; "swap" copies the
+    #: blocks to host memory and back. Recompute is the default because it is the only
+    #: strategy in the critical path and it wins for short sequences; swap exists so the
+    #: crossover (recompute cost vs. the PCIe round trip) is measured, not asserted.
+    #: `max_queue_depth` (the FR7 bound) lives in the P2 section where it was declared.
+    preemption: str = os.environ.get("PREEMPTION", "recompute")
 
     # --- generation ---
     default_max_tokens: int = 128

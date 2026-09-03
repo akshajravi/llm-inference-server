@@ -79,6 +79,30 @@ class ModelDims:
         return max(0, budget_bytes // self.bytes_per_block(block_size))
 
 
+@dataclass
+class HostBlocks:
+    """A sequence's blocks, parked in host memory while it is SWAPPED (P4, S2).
+
+    Per-layer CPU tensors shaped [len(blocks), block_size, num_kv_heads, head_dim], one
+    list for K and one for V — the pool's own layout minus the block dimension's
+    meaning, so the copy back is one `index_copy_` per layer and nothing is reshaped.
+    Which physical blocks these came from is deliberately *not* recorded: by the time
+    the sequence is re-admitted those indices belong to someone else, and the new set
+    only has to be the same length.
+    """
+
+    k: list[torch.Tensor]
+    v: list[torch.Tensor]
+
+    def __len__(self) -> int:
+        """Number of blocks — what the scheduler must allocate before swapping back in."""
+        return int(self.k[0].shape[0]) if self.k else 0
+
+    @property
+    def nbytes(self) -> int:
+        return sum(t.numel() * t.element_size() for t in self.k + self.v)
+
+
 class PagedKVPool:
     """The preallocated blocks. Indices come from BlockAllocator; meaning comes later."""
 
@@ -113,6 +137,49 @@ class PagedKVPool:
     @property
     def nbytes(self) -> int:
         return self.num_blocks * self.dims.bytes_per_block(self.block_size)
+
+    # ------------------------------------------------------------- swap (P4, S2)
+    def swap_out(self, blocks: list[int]) -> HostBlocks:
+        """Copy the named blocks to host memory. The caller frees them afterwards.
+
+        Gathers by index (`index_select`) rather than iterating blocks, so a victim with
+        forty blocks costs one device->host transfer per layer, not forty. On cuda the
+        destination is pinned: a pageable copy would stage through a pinned bounce
+        buffer anyway, so pinning up front is the same bytes with one fewer copy and it
+        is what lets swap_in be `non_blocking`. Nothing is pinned on cpu/mps because
+        there is no transfer to accelerate and mps does not support it.
+
+        Does not touch the free list. The pool knows tensors, the allocator knows
+        indices, and a swap that freed as a side effect would be the one place in the
+        system where memory changed hands invisibly — precisely the kind of path that
+        leaks under churn.
+        """
+        idx = torch.as_tensor(blocks, dtype=torch.long, device=self.device)
+        pin = self.device == "cuda"
+
+        def to_host(layer: torch.Tensor) -> torch.Tensor:
+            gathered = layer.index_select(0, idx)
+            host = torch.empty(gathered.shape, dtype=gathered.dtype, device="cpu", pin_memory=pin)
+            host.copy_(gathered)
+            return host
+
+        return HostBlocks(k=[to_host(t) for t in self.k], v=[to_host(t) for t in self.v])
+
+    def swap_in(self, host: HostBlocks, blocks: list[int]) -> None:
+        """Copy a host copy back into `blocks`, which need not be the ones it left.
+
+        Length must match exactly. A shorter target would silently drop the tail of the
+        sequence's cache and a longer one would leave uninitialised blocks that
+        attention reads as garbage, so both are refused loudly rather than clamped.
+        """
+        if len(blocks) != len(host):
+            raise ValueError(f"swap_in: {len(host)} host blocks into {len(blocks)} device blocks")
+        idx = torch.as_tensor(blocks, dtype=torch.long, device=self.device)
+        non_blocking = self.device == "cuda"
+        for dst, src in zip(self.k, host.k):
+            dst.index_copy_(0, idx, src.to(self.device, non_blocking=non_blocking))
+        for dst, src in zip(self.v, host.v):
+            dst.index_copy_(0, idx, src.to(self.device, non_blocking=non_blocking))
 
     def describe(self) -> str:
         """Goes in the results file and the writeup — a waste number is not meaningful

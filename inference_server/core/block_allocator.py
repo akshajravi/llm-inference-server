@@ -20,6 +20,8 @@ See IMPLEMENTATION_GUIDE.md "Days 6-9".
 
 from __future__ import annotations
 
+from typing import Callable
+
 
 class BlockAllocator:
     """A free list of physical block indices with per-block refcounts.
@@ -40,6 +42,12 @@ class BlockAllocator:
         # a deterministic order keeps allocation traces comparable between runs.
         self._free: list[int] = list(reversed(range(num_blocks)))
         self._refcount: list[int] = [0] * num_blocks
+        #: S1. Called with the block index the moment a refcount reaches zero, before
+        #: the block goes back on the free list. The prefix cache hangs its
+        #: invalidation here: an index it still mapped after this point would be
+        #: handed to another sequence and overwritten — a use-after-free that reads
+        #: as someone else's KV. A plain callable keeps this file torch- and model-free.
+        self.on_release: Callable[[int], None] | None = None
 
     # ------------------------------------------------------------------ inspection
     @property
@@ -103,6 +111,8 @@ class BlockAllocator:
             raise ValueError(f"double free of block {block}")
         self._refcount[block] -= 1
         if self._refcount[block] == 0:
+            if self.on_release is not None:
+                self.on_release(block)
             self._free.append(block)
         return self._refcount[block]
 

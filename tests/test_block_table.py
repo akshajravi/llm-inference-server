@@ -170,7 +170,9 @@ class FakeExecutor:
     def execute(self, seqs: list[Sequence]) -> list[int]:
         self.steps += 1
         for s in seqs:
-            s.num_cached = s.prompt_len if s.needs_prefill else s.num_cached + 1
+            # Prefill caches whatever was fed, not `prompt_len`: after a recompute
+            # preemption (P4) the fed history is prompt + generated tokens.
+            s.num_cached = len(s.next_input_ids) if s.needs_prefill else s.num_cached + 1
         return [7] * len(seqs)          # 7 is never the stop token below
 
     def reset(self) -> None:

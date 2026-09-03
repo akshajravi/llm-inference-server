@@ -1,11 +1,20 @@
 """Sequence — P2 (Days 3-5). One request's state, and nothing else.
 
-Holds: prompt IDs, generated IDs, KV cache (P2) or block table (P3), status, max_tokens,
-arrival time. Knows how to answer "am I done?"; knows nothing about who else is running.
+Holds: prompt IDs, generated IDs, KV cache (P2) or block table (P3), a host copy of the
+blocks while swapped out (P4), status, max_tokens, arrival time. Knows how to answer "am I done?"; knows nothing about who else is running.
 
     WAITING --admit--> RUNNING --eos/max_tokens--> FINISHED
-       ^                  |
-       +---preempt (P4)---+          (SWAPPED is the S2 stretch path)
+       ^                 |   ^
+       |   preempt (P4)  |   |  admit (swap-in)
+       +--- recompute ---+---+--> SWAPPED
+              (num_cached -> 0)   (num_cached kept; KV parked on the host)
+
+The two preemption edges differ in exactly one thing: what happens to `num_cached`.
+Recompute zeroes it, so the sequence re-enters as a prefill over prompt + everything it
+has generated (see `next_input_ids`). Swap keeps it, so the sequence re-enters as a
+decode once its blocks are copied back — different physical block indices, same
+contents, same `num_cached`. Neither edge touches `output_token_ids`, which is what
+makes "preempted != dropped" (FR6) a structural property rather than a promise.
 
 This file is deliberately the dullest of the three. The scheduler decides *who* runs and
 the executor decides *how* a forward pass is shaped; a Sequence only knows what has
@@ -73,6 +82,16 @@ class Sequence:
     #: either one reinterpreting the other's state.
     block_table: "BlockTable | None" = None
 
+    #: P4 (S2): the host-side copy of this sequence's blocks while SWAPPED, else None.
+    #: Opaque here for the same reason `kv` is — only kv_pool.py knows its layout.
+    host_kv: object | None = None
+
+    #: P4 bookkeeping. `preemptions` is how many times this sequence was a victim (the
+    #: overload run charts the distribution); `preempted_step` is the scheduler step it
+    #: last happened on, which is what the re-admission guard compares against.
+    preemptions: int = 0
+    preempted_step: int = -1
+
     # --- timing. Recorded here rather than in the engine because a sequence outlives
     # any single step, and TTFT must denote the same event it does in P0/P1. ---
     arrival_s: float = field(default_factory=time.perf_counter)
@@ -116,13 +135,30 @@ class Sequence:
     def next_input_ids(self) -> list[int]:
         """The tokens to feed on this sequence's next forward pass.
 
-        Prefill hands over the whole prompt; decode hands over exactly the token sampled
-        last step. Everything before it is already in the cache, which is the only reason
-        decode is one token wide instead of `total_len` wide.
+        Prefill hands over everything this sequence owns; decode hands over exactly the
+        token sampled last step. Everything before it is already in the cache, which is
+        the only reason decode is one token wide instead of `total_len` wide.
+
+        On first admission "everything it owns" is just the prompt. After a recompute
+        preemption (P4) it is prompt + every token generated so far: the cache was thrown
+        away, so the whole history goes back through the model in one pass and the next
+        token is sampled from its final logit exactly as if nothing had happened.
+
+        One expression covers all of it, and the S1 case too: everything past
+        `num_cached`. With nothing cached that is the whole history; in decode it is the
+        one token sampled last step; after a prefix-cache hit it is the part of the
+        prompt the cache did not have (at least one token — see PrefixCache.match).
         """
-        if self.needs_prefill:
-            return self.prompt_token_ids
-        return self.output_token_ids[-1:]
+        return (self.prompt_token_ids + self.output_token_ids)[self.num_cached :]
+
+    @property
+    def is_prefilling(self) -> bool:
+        """True when the next pass feeds more than one token — the shape the scheduler
+        keys batch homogeneity on. `needs_prefill` (nothing cached) always implies it,
+        so P2 sees no change. S1 adds the third case: a prefix-cache hit leaves
+        `num_cached > 0` with a multi-token remainder still to feed, which must run
+        with the prefills and not be mistaken for a decode."""
+        return self.needs_prefill or len(self.next_input_ids) > 1
 
     @property
     def next_position(self) -> int:
@@ -159,6 +195,40 @@ class Sequence:
             self._finish("eos", now)
         elif self.num_generated >= self.max_tokens:
             self._finish("length", now)
+
+    def preempt(self, step: int, host_kv: object | None = None) -> None:
+        """RUNNING -> WAITING (recompute) or RUNNING -> SWAPPED (swap). P4, FR6.
+
+        The scheduler has already freed this sequence's blocks; this records what that
+        means for the next forward pass. With no host copy the cache is simply gone, so
+        `num_cached` drops to zero and the whole history is re-prefilled on re-admission.
+        With one, the cache still exists — just not on the device — so `num_cached`
+        stands and re-admission resumes as a one-token decode.
+
+        The alternative, letting the scheduler poke `status` and `num_cached` directly,
+        was how P2 admitted sequences. It is fine for one edge and wrong for four: the
+        swap edge that forgot to keep `num_cached` would re-prefill *and* swap in, feeding
+        the model a prompt it already has KV for, at positions that are already occupied.
+        """
+        if self.status is not Status.RUNNING:
+            raise RuntimeError(f"{self.seq_id} preempted while {self.status.value}, not running")
+        self.preemptions += 1
+        self.preempted_step = step
+        if host_kv is None:
+            self.num_cached = 0
+            self.status = Status.WAITING
+        else:
+            self.host_kv = host_kv
+            self.status = Status.SWAPPED
+
+    def admit(self) -> None:
+        """WAITING or SWAPPED -> RUNNING. The swap-in itself is the scheduler's job (it
+        owns the allocator and the pool); by the time this is called the blocks are
+        back on the device and the host copy is no longer needed."""
+        if self.status not in (Status.WAITING, Status.SWAPPED):
+            raise RuntimeError(f"{self.seq_id} admitted while {self.status.value}")
+        self.host_kv = None
+        self.status = Status.RUNNING
 
     def _finish(self, reason: str, now: float) -> None:
         self.status = Status.FINISHED

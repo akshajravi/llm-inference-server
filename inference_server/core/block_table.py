@@ -29,6 +29,8 @@ No torch here either. See IMPLEMENTATION_GUIDE.md "Days 6-9".
 
 from __future__ import annotations
 
+from typing import Callable
+
 from inference_server.config import CONFIG
 from inference_server.core.block_allocator import BlockAllocator
 
@@ -45,6 +47,15 @@ class BlockTable:
         self.allocator = allocator
         self.block_size = block_size
         self.blocks: list[int] = []
+        #: S1. Content hash of each FULL block, in logical order; a prefix of `blocks`
+        #: (the partial last block has no hash yet). Written by the prefix cache when a
+        #: block is adopted from it or registered into it; the chain lets a decode step
+        #: hash one new block instead of the whole history. Cleared with `free()`.
+        self.hashes: list[bytes] = []
+        #: S1. The prefix cache's scan cursor: every block below this index is known
+        #: to be in the cache (ours or an identical one). Lets `register` cost O(1) per
+        #: decode step instead of re-checking every full block. Cleared with `free()`.
+        self.published: int = 0
 
     # ------------------------------------------------------------------- capacity
     @property
@@ -81,6 +92,46 @@ class BlockTable:
         fresh = self.allocator.allocate_many(needed)
         self.blocks.extend(fresh)
         return fresh
+
+    def adopt(self, blocks: list[int], hashes: list[bytes]) -> None:
+        """S1: point this table at blocks another sequence already holds, taking one
+        reference on each. Only onto an empty table — a prefix match is by definition
+        the *start* of a sequence's history — and only for full blocks, whose hashes
+        are known and arrive with them."""
+        if self.blocks:
+            raise ValueError("adopt() onto a non-empty table; prefix sharing is prefix-only")
+        if len(hashes) != len(blocks):
+            raise ValueError(f"{len(blocks)} blocks with {len(hashes)} hashes")
+        for block in blocks:
+            self.allocator.incref(block)
+        self.blocks.extend(blocks)
+        self.hashes.extend(hashes)
+
+    def ensure_private(self, logical: int, copy: Callable[[int, int], None] | None = None) -> tuple[int, int] | None:
+        """Copy-on-write: make logical block `logical` exclusively ours before a write.
+
+        If the physical block has another referent, take a fresh block, let `copy(src,
+        dst)` move the KV bytes (the caller owns the pool; this file owns no tensors),
+        drop our reference on the shared one, and remap. Returns (src, dst) when a copy
+        happened, None when the block was already private — which, under the
+        full-blocks-only sharing policy, is every time: a sequence's writes start at
+        `num_cached`, a block boundary after a match, in a block it just allocated.
+        The guard is here so a future policy that shares a partial block is safe by
+        construction rather than by remembering. Raises MemoryError like `ensure_capacity`
+        if the pool is empty; the scheduler's `_grow` is where that is handled, and it
+        runs before this does, so in practice the free block was reserved by then.
+        """
+        if not 0 <= logical < len(self.blocks):
+            raise IndexError(f"logical block {logical} outside [0, {len(self.blocks)})")
+        src = self.blocks[logical]
+        if self.allocator.refcount(src) <= 1:
+            return None
+        dst = self.allocator.allocate()
+        if copy is not None:
+            copy(src, dst)
+        self.allocator.free(src)
+        self.blocks[logical] = dst
+        return src, dst
 
     # -------------------------------------------------------------------- addressing
     def slot(self, position: int) -> tuple[int, int]:
@@ -119,6 +170,8 @@ class BlockTable:
             return
         self.allocator.free_many(self.blocks)
         self.blocks = []
+        self.hashes = []
+        self.published = 0
 
     # ------------------------------------------------------------------------ metrics
     def waste(self, num_tokens: int) -> int:
