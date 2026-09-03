@@ -24,6 +24,8 @@ from __future__ import annotations
 from collections import deque
 
 from inference_server.config import CONFIG
+from inference_server.core.block_allocator import BlockAllocator
+from inference_server.core.block_table import BlockTable
 from inference_server.core.executor import Executor
 from inference_server.core.sequence import Sequence, Status
 
@@ -37,10 +39,22 @@ class Scheduler:
     and 2 run *between every forward pass*, so a slot comes back the instant it is free.
     """
 
-    def __init__(self, executor: Executor, eos_token_id: int) -> None:
+    def __init__(
+        self,
+        executor: Executor,
+        eos_token_id: int,
+        allocator: BlockAllocator | None = None,
+    ) -> None:
         self.executor = executor
         self.eos_token_id = eos_token_id
         self.max_running = CONFIG.max_running
+
+        #: P3 only. None means the contiguous engines, which let HuggingFace grow a
+        #: private cache per sequence. When present, every admitted sequence gets a
+        #: block table and this scheduler becomes responsible for the memory — which is
+        #: why `_grow` and the free in `_evict` are guarded on exactly this field, and
+        #: why P2's behaviour is bit-for-bit unchanged when it is None.
+        self.allocator = allocator
 
         # FIFO. Admitting the newest or the shortest request would raise throughput and
         # starve whoever arrived first; the queue is bounded in P4 (FR7), not here.
@@ -75,6 +89,7 @@ class Scheduler:
         if not batch:
             return []
 
+        self._grow(batch)
         tokens = self.executor.execute(batch)
         for seq, token in zip(batch, tokens):
             seq.append_token(token, self.eos_token_id)
@@ -84,18 +99,42 @@ class Scheduler:
         # the only place eviction is allowed to happen.
         return [s for s in batch if s.is_finished]
 
+    # ------------------------------------------------------------------------- memory
+    def _grow(self, batch: list[Sequence]) -> None:
+        """Give every sequence in this batch the blocks its pass is about to write.
+
+        No-op without an allocator. With one, this is the single place in the system
+        where "out of KV memory" is observable: `ensure_capacity` raises MemoryError,
+        and P4 will catch it here to pick a victim and preempt. Until then it propagates,
+        which is the honest behaviour — a server that silently wrote past its pool would
+        corrupt another sequence's KV rather than fail.
+
+        Cheap on almost every step: a decode sequence crosses a block boundary once
+        every `block_size` tokens, so 15 of 16 calls allocate nothing.
+        """
+        if self.allocator is None:
+            return
+        for seq in batch:
+            if seq.block_table is None:
+                seq.block_table = BlockTable(self.allocator, CONFIG.block_size)
+            seq.block_table.ensure_capacity(seq.cached_after_next_pass)
+
     # --------------------------------------------------------------------- the policy
     def _evict(self) -> None:
         """Drop finished sequences and free what they hold.
 
-        P2 frees a whole per-sequence KV cache here. P3 frees block indices back to the
-        allocator instead, and that is the only line in this file that changes.
+        P2 frees a whole per-sequence KV cache here; P3 also returns block indices to
+        the allocator. The free must be explicit — nothing is garbage-collected out of a
+        preallocated tensor, so a sequence dropped without this call leaks its blocks
+        permanently. That is the failure the free-list test is aimed at.
         """
         if not any(s.is_finished for s in self.running):
             return
         for seq in self.running:
             if seq.is_finished:
                 seq.kv = None
+                if seq.block_table is not None:
+                    seq.block_table.free()
         self.running = [s for s in self.running if not s.is_finished]
 
     def _admit(self) -> None:

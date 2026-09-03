@@ -20,6 +20,10 @@ from __future__ import annotations
 import enum
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:                       # import-only-for-types: this file stays leaf-level
+    from inference_server.core.block_table import BlockTable
 
 
 class Status(enum.Enum):
@@ -62,6 +66,13 @@ class Sequence:
     #: Typed as object because nothing outside the executor may inspect it.
     kv: object | None = None
 
+    #: P3: this sequence's logical->physical block mapping, or None on the contiguous
+    #: engines. The two are mutually exclusive by construction — an engine either owns
+    #: a private cache object or holds blocks in the shared pool, never both — but they
+    #: are separate fields so that P2 and P3 can be benchmarked in one process without
+    #: either one reinterpreting the other's state.
+    block_table: "BlockTable | None" = None
+
     # --- timing. Recorded here rather than in the engine because a sequence outlives
     # any single step, and TTFT must denote the same event it does in P0/P1. ---
     arrival_s: float = field(default_factory=time.perf_counter)
@@ -81,6 +92,16 @@ class Sequence:
     def total_len(self) -> int:
         """Tokens this sequence owns, cached or not. P3 sizes its block table off this."""
         return self.prompt_len + self.num_generated
+
+    @property
+    def cached_after_next_pass(self) -> int:
+        """What `num_cached` will be once the next forward pass completes.
+
+        The block table must be grown to this *before* the pass runs, not after: the
+        pass writes KV for these tokens, and writing into a block that has not been
+        allocated yet is the paged equivalent of a segfault.
+        """
+        return self.num_cached + len(self.next_input_ids)
 
     @property
     def needs_prefill(self) -> bool:
