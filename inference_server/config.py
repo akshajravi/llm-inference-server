@@ -15,6 +15,10 @@ import torch
 
 SEED = 1337
 
+#: The published pool size (see Config.num_blocks). A module constant so a test can check
+#: the derivation even when NUM_BLOCKS has shrunk the live config for a local run.
+DEFAULT_NUM_BLOCKS = 2048
+
 
 def seed_everything(seed: int = SEED) -> None:
     """Fix every RNG we touch. Called once at model load."""
@@ -71,7 +75,11 @@ class Config:
     #: case P2 does — the win has to come from packing, not from a smaller pool. For gpt2
     #: at fp32 that is 2.4 GiB (72 KiB/token); PagedKVPool.describe() prints the real
     #: figure, and ModelDims.blocks_for_budget() sizes it from a memory budget instead.
-    num_blocks: int = 2048
+    #: NUM_BLOCKS overrides it for local test runs only: on the dev Mac the default pool
+    #: is 2.25 GiB per engine and the goldens need a few hundred tokens, so
+    #: `NUM_BLOCKS=256 make test` runs the whole suite in ~290 MiB. Published benchmarks
+    #: never set it — the waste comparison is only fair against the full reservation.
+    num_blocks: int = int(os.environ.get("NUM_BLOCKS", DEFAULT_NUM_BLOCKS))
     #: Which paged attention kernel core/attention.py dispatches to. "gather" is the
     #: PyTorch path that ships; "triton" is S3 stretch and raises until Day 14.
     attention: str = os.environ.get("ATTENTION", "gather")

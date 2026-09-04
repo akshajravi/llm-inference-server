@@ -1,4 +1,4 @@
-.PHONY: help setup lock lock-gpu test goldens bench bench-one bench-http overload overload-smoke charts headline serve clean tree
+.PHONY: help setup lock lock-gpu test test-light goldens bench bench-one bench-http overload overload-smoke charts headline serve clean tree
 .DEFAULT_GOAL := help
 
 VENV    := .venv
@@ -37,6 +37,9 @@ lock-gpu: $(VENV)/bin/activate  ## Recompile requirements-gpu.txt — LINUX/CUDA
 
 test:  ## M1 gate — run before every commit
 	$(PY) -m pytest tests/ -v
+
+test-light:  ## Same suite with a 256-block pool (~290 MiB instead of 2.25 GiB per engine) for the dev Mac
+	NUM_BLOCKS=256 $(PY) -m pytest tests/ -q
 
 goldens:  ## Regenerate M1 golden token IDs (deliberate act; see scripts/make_goldens.py)
 	$(PY) -m scripts.make_goldens

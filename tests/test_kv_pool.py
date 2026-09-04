@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from inference_server.config import CONFIG
+from inference_server.config import CONFIG, DEFAULT_NUM_BLOCKS
 from inference_server.core.kv_pool import ModelDims, PagedKVPool
 
 # gpt2's real numbers, written out rather than read from the model so these run with no
@@ -65,4 +65,6 @@ def test_reported_size_matches_the_tensors_actually_allocated():
 def test_default_pool_holds_exactly_the_contiguous_worst_case():
     """The config default is a derivation, not a guess: P3 must be measured holding the
     same worst case P2 reserves, or the waste comparison is against a smaller pool."""
-    assert CONFIG.num_blocks * CONFIG.block_size == CONFIG.max_running * CONFIG.max_seq_len
+    # The *default*, not CONFIG: NUM_BLOCKS may legitimately shrink the pool for a local
+    # test run, and that must not read as the published reservation having changed.
+    assert DEFAULT_NUM_BLOCKS * CONFIG.block_size == CONFIG.max_running * CONFIG.max_seq_len

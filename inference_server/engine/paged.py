@@ -30,6 +30,10 @@ See IMPLEMENTATION_GUIDE.md "Days 6-9".
 
 from __future__ import annotations
 
+import gc
+
+import torch
+
 from inference_server.config import CONFIG
 from inference_server.core.block_allocator import BlockAllocator
 from inference_server.core.kv_pool import PagedKVPool
@@ -76,6 +80,25 @@ class PagedEngine(ContinuousEngine):
         )
 
         self._init_driver()
+
+    def shutdown(self) -> None:
+        """Stop the loop, then actually give the pool back.
+
+        Dropping the last reference to 2.25 GiB of tensors is not the same as freeing
+        it: MPS and CUDA keep freed blocks in their caching allocator, so a test session
+        that builds one paged engine per module stacks pools until the machine swaps.
+        Explicitly releasing here keeps the peak at one pool, no matter how many engines
+        a process builds in sequence.
+        """
+        super().shutdown()
+        # Only the tensors go. The scheduler, allocator and their counters stay readable
+        # (stats() after shutdown is how the tests inspect a finished run).
+        self.pool.release()
+        gc.collect()
+        if CONFIG.device == "mps":
+            torch.mps.empty_cache()
+        elif CONFIG.device == "cuda":
+            torch.cuda.empty_cache()
 
     def _to_result(self, seq: Sequence) -> Result:
         """Same as ContinuousEngine's, except the two M3 fields are measured.

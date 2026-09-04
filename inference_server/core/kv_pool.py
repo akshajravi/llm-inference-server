@@ -181,6 +181,13 @@ class PagedKVPool:
         for dst, src in zip(self.v, host.v):
             dst.index_copy_(0, idx, src.to(self.device, non_blocking=non_blocking))
 
+    def release(self) -> None:
+        """Drop the tensors. The pool object survives so `describe()` and the sizes still
+        answer, but the memory is returned to the device allocator — which only takes
+        effect once the caller also empties the device cache (PagedEngine.shutdown)."""
+        self.k = []
+        self.v = []
+
     def describe(self) -> str:
         """Goes in the results file and the writeup — a waste number is not meaningful
         without the pool size it was measured against."""
