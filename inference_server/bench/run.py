@@ -184,7 +184,15 @@ async def main() -> None:
     levels = [int(c) for c in args.concurrency.split(",")]
     spec = WORKLOADS[args.workload]
 
-    _, tokenizer = load()
+    if args.http:
+        # Over the wire the model lives in the server process. Loading it here too would
+        # cost the client 500 MB just to tokenize prompts — on the dev Mac that is memory
+        # the server's KV pool needs.
+        from transformers import AutoTokenizer  # noqa: PLC0415
+
+        tokenizer = AutoTokenizer.from_pretrained(CONFIG.model_id)
+    else:
+        _, tokenizer = load()
     items = build_workload(spec, tokenizer)
 
     payload: dict = {
